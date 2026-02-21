@@ -5,7 +5,12 @@ from pypdf import PdfReader, PdfWriter
 st.set_page_config(page_title="Med Clipper Pro", page_icon="🔬")
 st.title("🔬 Med Clipper Pro")
 
-api_key = st.secrets["GOOGLE_API_KEY"]
+# משיכת המפתח
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+except:
+    st.error("לא נמצא מפתח ב-Secrets")
+    st.stop()
 
 uploaded_file = st.file_uploader("העלה קובץ PDF", type="pdf")
 topic = st.text_input("נושא לחיפוש (באנגלית):")
@@ -24,47 +29,57 @@ if st.button("בצע חיפוש עומק"):
         reader = PdfReader(uploaded_file)
         total_pages = len(reader.pages)
         
-        # שלב 1: בדיקת תקינות טקסט
-        test_text = reader.pages[0].extract_text()[:500]
-        with st.expander("🔍 הצץ לתוך הקובץ (בדיקת קריאות)"):
-            st.code(test_text)
-
-        with st.spinner("סורק את הספר..."):
-            # דגימה צפופה יותר (כל 6 עמודים) ותפיסת כותרות
+        with st.spinner("סורק את הספר ומחפש מילות מפתח..."):
+            found_in_pages = []
             map_data = ""
-            for i in range(0, total_pages, 6):
-                page_text = reader.pages[i].extract_text()
-                if page_text:
-                    # לוקח את 1200 התווים הראשונים (כדי לא לפספס כותרות בגלל עמודות)
-                    map_data += f"\n[DOC_PAGE_{i+1}] {page_text[:1200]}\n"
-
-            prompt = f"""
-            You are a medical researcher. I need to find the chapter about '{topic}'.
-            I have a textbook where text might be messy due to double columns.
-            Look at these samples every 6 pages:
-            {map_data[:40000]}
             
-            Find the starting and ending PDF page numbers for '{topic}'. 
-            Even if the exact term isn't there, look for related clinical sections.
-            Return ONLY the range like: start-end. If not found, return 'None'.
-            """
+            # חיפוש טקסטואלי פשוט בכל עמוד ועמוד (מהיר מאוד)
+            for i in range(total_pages):
+                text = reader.pages[i].extract_text()
+                if text and topic.lower() in text.lower():
+                    found_in_pages.append(i + 1)
+                    # מוסיף דגימות ל-AI רק מהעמודים שבהם המילה נמצאה
+                    if len(map_data) < 30000:
+                        map_data += f"\n[PAGE_{i+1}] {text[:1500]}\n"
             
-            ans = ask_gemini(prompt).strip()
-            nums = re.findall(r'\d+', ans)
-            
-            if len(nums) >= 2:
-                start_p, end_p = int(nums[0]), int(nums[1])
-                # הרחבת טווח ביטחון ל-10 עמודים כי מדובר בנלסון
-                start_p = max(1, start_p - 5)
-                end_p = min(total_pages, end_p + 10)
-                
-                st.success(f"הנושא אותר! עמודים {start_p} עד {end_p}")
-                writer = PdfWriter()
-                for p in range(start_p - 1, end_p):
-                    writer.add_page(reader.pages[p])
-                
-                output = io.BytesIO()
-                writer.write(output)
-                st.download_button(f"📥 הורד פרק: {topic}", output.getvalue(), f"{topic}.pdf")
+            if not found_in_pages:
+                st.error(f"המילה '{topic}' לא נמצאה בכלל בטקסט של הקובץ הזה.")
+                st.info("טיפ: וודא שהנושא אכן נמצא בטווח העמודים שהעלית.")
             else:
-                st.error(f"לא הצלחתי למצוא את '{topic}'. נסה מונח רחב יותר כמו 'Immunodeficiency' במקום 'T cell'.")
+                st.write(f"🔍 נמצאו אזכורים בעמודים: {found_in_pages[:10]}...")
+                
+                # עכשיו שואלים את ה-AI להגדיר את גבולות הפרק
+                prompt = f"""
+                I found mentions of '{topic}' in these PDF pages: {found_in_pages}.
+                Here is the text from some of those pages:
+                {map_data}
+                
+                Based on this, what is the full start and end page range of the CHAPTER covering '{topic}'?
+                Return ONLY the range like: start-end.
+                """
+                
+                ans = ask_gemini(prompt).strip()
+                nums = re.findall(r'\d+', ans)
+                
+                if len(nums) >= 2:
+                    start_p, end_p = int(nums[0]), int(nums[1])
+                    # הגנה מפני טעויות טווח
+                    start_p = max(1, start_p - 2)
+                    end_p = min(total_pages, end_p + 5)
+                    
+                    st.success(f"הפרק אותר! חותך עמודים {start_p} עד {end_p}")
+                    writer = PdfWriter()
+                    for p in range(start_p - 1, end_p):
+                        writer.add_page(reader.pages[p])
+                    
+                    output = io.BytesIO()
+                    writer.write(output)
+                    st.download_button(f"📥 הורד פרק: {topic}", output.getvalue(), f"{topic}.pdf")
+                else:
+                    st.warning("ה-AI התקשה להגדיר טווח, מוריד את העמודים הספציפיים שבהם המילה נמצאה.")
+                    writer = PdfWriter()
+                    for p_num in found_in_pages[:50]: # הגבלה ל-50 עמודים
+                        writer.add_page(reader.pages[p_num-1])
+                    output = io.BytesIO()
+                    writer.write(output)
+                    st.download_button("📥 הורד עמודים עם אזכורים", output.getvalue(), "mentions.pdf")
