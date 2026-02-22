@@ -4,8 +4,9 @@ import json
 import os
 from pypdf import PdfReader
 
-st.set_page_config(page_title="Nelson Chapter Expert", page_icon="🔬", layout="wide")
-st.title("🔬 Nelson AI: ניתוח פרקים מלאים")
+# --- הגדרות דף ---
+st.set_page_config(page_title="Nelson Real-Text Expert", page_icon="🔬", layout="wide")
+st.title("🔬 Nelson AI: המומחה שבאמת קורא")
 
 # המיפוי המדויק שלך
 NELSON_MAP = [
@@ -16,70 +17,85 @@ NELSON_MAP = [
     {"name": "Part 5", "id": "1iEukcQ443jQeG35u4zSENFb_9vkhiCtx", "start": 3961, "end": 4472},
 ]
 
-def call_gemini(prompt):
+def download_file(f_id, name):
+    path = f"{name}.pdf"
+    if not os.path.exists(path):
+        url = f'https://drive.google.com/uc?id={f_id}&export=download'
+        r = requests.get(url)
+        with open(path, 'wb') as f:
+            f.write(r.content)
+    return path
+
+# פונקציה שסורקת את ה-PDF ומחפשת את התוכן האמיתי
+def search_actual_text(topic, part_data):
+    path = download_file(part_data['id'], part_data['name'])
+    reader = PdfReader(path)
+    relevant_chunks = []
+    
+    # סריקה של כל 5 עמודים כדי למצוא את תחילת הפרק/נושא (למניעת איטיות)
+    for i in range(0, len(reader.pages), 1):
+        text = reader.pages[i].extract_text()
+        if topic.lower() in text.lower():
+            printed_page = i + part_data['start']
+            # שואב את העמוד שנמצא ועוד 2 עמודים אחריו כדי לקבל הקשר של פרק
+            context_text = ""
+            for j in range(i, min(i + 3, len(reader.pages))):
+                context_text += reader.pages[j].extract_text()
+            
+            relevant_chunks.append({
+                "part": part_data['name'],
+                "printed_page": printed_page,
+                "text": context_text
+            })
+            if len(relevant_chunks) >= 2: break # מצאנו מספיק הקשר
+            
+    return relevant_chunks
+
+def ask_gemini_with_real_text(topic, found_context):
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
-    # שימוש במודל שזיהינו בסריקה: gemini-2.5-flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    # תיקון שם המודל לגרסה יציבה
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    context_str = "\n\n".join([f"SOURCE: {c['part']}, Page {c['printed_page']}:\n{c['text']}" for c in found_context])
+    
+    prompt = f"""
+    You are a pediatric expert. I have extracted the following ACTUAL text from the Nelson Textbook 22nd Edition.
+    
+    TOPIC: {topic}
+    EXTRACTED TEXT:
+    {context_str}
+    
+    TASK:
+    1. Summarize the chapter/section based ONLY on the extracted text above.
+    2. Do not invent page numbers. Use only the ones provided in the source.
+    3. If the text is about a different topic, state that you couldn't find a direct match.
+    
+    Language: Hebrew, medical terms in English.
+    """
+    
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     res = requests.post(url, json=payload)
     return res.json()['candidates'][0]['content']['parts'][0]['text']
 
-# --- פונקציה לזיהוי הפרקים הרלוונטיים ---
-def identify_chapters(topic):
-    map_context = "\n".join([f"{m['name']}: {m['start']}-{m['end']}" for m in NELSON_MAP])
-    prompt = f"""
-    Topic: {topic}
-    Library Map: {map_context}
-    
-    You are a pediatric expert. Identify the FULL CHAPTERS in Nelson Textbook of Pediatrics 22nd Ed that cover this topic.
-    For each chapter, provide:
-    1. Exact Chapter Name and Number.
-    2. The full Printed Page Range (e.g., 1240-1255).
-    3. Determine which PDF Part(s) contain this range.
-    4. Provide the PDF Page Index Range for each Part.
-    
-    Format: Return a JSON-ready list of objects.
-    """
-    response = call_gemini(prompt)
-    # ניקוי הטקסט כדי לחלץ רק את הרשימה (למקרה שגמיני מוסיף מלל)
-    return response
-
 # --- ממשק משתמש ---
-st.info("המערכת תסרוק ותמפה את הפרקים המלאים הרלוונטיים מתוך 4,472 עמודי הספר.")
+topic = st.text_input("הזן נושא למחקר (באנגלית, למשל: Kawasaki disease):")
 
-topic = st.text_input("הזן נושא לסריקת פרקים (למשל: Congenital Heart Disease):")
-
-if st.button("בצע סקירת פרקים מלאה"):
+if st.button("בצע סריקת טקסט וניתוח פרקים"):
     if topic:
-        with st.spinner("מזהה את הפרקים הרלוונטיים בנלסון 22..."):
-            # שלב 1: זיהוי ומיפוי
-            chapter_plan = identify_chapters(topic)
-            
-            # שלב 2: יצירת הסקירה המעמיקה
-            final_prompt = f"""
-            Based on Nelson Textbook of Pediatrics 22nd Edition, provide a high-level medical synthesis for the topic: {topic}.
-            
-            Your analysis MUST focus on the WHOLE chapters identified here:
-            {chapter_plan}
-            
-            For each chapter:
-            - Summarize the core pathophysiology.
-            - List the clinical "red flags".
-            - Summarize the full management protocol as described in the chapter.
-            
-            At the end, provide a clear NAVIGATION TABLE:
-            | Chapter | Number | Printed Range | PDF Part | PDF Page Range |
-            
-            Language: Hebrew prose, English medical terms.
-            """
-            
-            with st.spinner("מנתח את מבנה הפרקים ומסכם את החומר..."):
-                report = call_gemini(final_prompt)
+        all_context = []
+        with st.spinner("מחפש את הטקסט האמיתי בתוך קבצי ה-PDF..."):
+            for part in NELSON_MAP:
+                found = search_actual_text(topic, part)
+                if found:
+                    all_context.extend(found)
+                    st.write(f"✅ נמצא תוכן רלוונטי ב-{part['name']}")
+        
+        if all_context:
+            with st.spinner("ג'מיני מנתח את הטקסטים שנמצאו..."):
+                answer = ask_gemini_with_real_text(topic, all_context)
                 st.markdown("---")
-                st.markdown(report)
+                st.markdown(answer)
+        else:
+            st.error("לא נמצא טקסט תואם בתוך הספר. נסה להשתמש במושג באנגלית.")
     else:
         st.warning("אנא הזן נושא.")
-
-with st.sidebar:
-    st.write("📖 **מצב סריקה:** פרקים מלאים")
-    st.write("עמודי התחלה מכוילים (כולל ה-41- בחלק 1).")
