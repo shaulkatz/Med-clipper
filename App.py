@@ -1,17 +1,17 @@
 import streamlit as st
 import json, urllib.request
 
-st.title("🧪 בדיקת דופק: חיבור ל-Gemini 2.0")
+st.title("🧪 בדיקת חיבור: Gemini 2.0 Flash")
 
-# בדיקה שהמפתח מוגדר ב-Secrets
+# וידוא שהמפתח מוגדר ב-Secrets
 if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("❌ המפתח לא נמצא ב-Secrets של Streamlit!")
+    st.error("❌ המפתח לא נמצא ב-Secrets!")
     st.stop()
 
 api_key = st.secrets["GOOGLE_API_KEY"].strip()
 
 if st.button("שלח הודעת בדיקה"):
-    # שימוש במודל המדויק שמצאנו ברשימה שלך
+    # שימוש בכתובת המדויקת למודל 2.0 פלאש
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     
     payload = {
