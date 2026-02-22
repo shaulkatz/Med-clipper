@@ -27,7 +27,7 @@ def download_with_progress(url, local_path, display_name):
         response = requests.get(url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
         
-        # אם השרת לא מחזיר גודל, נניח 150MB לצורך התצוגה
+        # הערכה של 150MB לתצוגה אם השרת לא מחזיר גודל
         if total_size == 0: total_size = 150 * 1024 * 1024 
 
         downloaded_size = 0
@@ -38,7 +38,7 @@ def download_with_progress(url, local_path, display_name):
                     downloaded_size += len(chunk)
                     progress = min(downloaded_size / total_size, 1.0)
                     progress_bar.progress(progress)
-                    status_container.text(f"📥 מוריד את {display_name}: {downloaded_size // (1024*1024)}MB / {total_size // (1024*1024)}MB")
+                    status_container.text(f"📥 מוריד את {display_name}: {downloaded_size // (1024*1024)}MB")
         
         status_container.empty()
         progress_bar.empty()
@@ -77,8 +77,9 @@ def call_gemini(prompt):
 # --- 4. ממשק משתמש ---
 st.title("🔬 Nelson AI: Senior Medical Expert Researcher")
 
-# טעינה אוטומטית של הספרייה
+# טעינה אוטומטית של הספרייה מהדרייב
 library_data = setup_library()
+
 if library_data:
     st.success(f"✅ הספרייה של נלסון (22nd Ed) טעונה ומוכנה! ({len(library_data)} קבצים)")
 
@@ -86,7 +87,7 @@ with st.sidebar:
     st.header("⏱️ הגדרות הרצאה")
     duration = st.text_input("מה משך הזמן המוקצב להרצאה?", placeholder="למשל: 45 minutes")
     st.markdown("---")
-    if st.button("נקה זיכרון וטען מחדש"):
+    if st.button("רענן ספרייה (Cache Clear)"):
         st.cache_resource.clear()
         st.rerun()
 
@@ -98,36 +99,42 @@ if st.button("התחל מחקר עומק"):
     elif not topic:
         st.error("אנא הזן נושא למחקר.")
     else:
-        with st.spinner("המערכת מבצעת כיול עמודים וניתוח הקשרים..."):
-            # יצירת מפת עוגנים (Calibration) לדיוק מקסימלי
+        with st.spinner("המערכת מבצעת כיול עמודים וניתוח הקשרים קליניים..."):
+            # יצירת מפת עוגנים (Calibration) לדיוק מקסימלי בעמודים
             calibration_map = ""
             for book in library_data:
-                reader = PdfReader(book["path"])
-                # דגימת טקסט מהעמוד הראשון למציאת מספר העמוד המודפס
-                anchor_text = reader.pages[0].extract_text()[:1200]
-                calibration_map += f"\nFILE: {book['name']}\nTOTAL PDF PAGES: {len(reader.pages)}\nFIRST PAGE SNIPPET (Use for calibration): {anchor_text}\n"
+                try:
+                    reader = PdfReader(book["path"])
+                    # דגימה של דף ראשון ואמצע למניעת סטיות
+                    anchor_text = reader.pages[0].extract_text()[:1000]
+                    calibration_map += f"\nFILE: {book['name']}\nTOTAL PDF PAGES: {len(reader.pages)}\nFIRST PAGE SNIPPET: {anchor_text}\n"
+                except: continue
 
-            # הפרומפט המקצועי המשולב
+            # הפרומפט המקצועי המשולב (הגרסה שלך)
             expert_prompt = f"""
-            You are a world-renowned medical expert and researcher...
-            
-            TOPIC: {topic}
-            DURATION: {duration}
-            
-            **CRITICAL AND STRICT RESTRICTION:** You are strictly forbidden from hallucinating. Base your response 100% on the textbook files.
+            You are a world-renowned medical expert and researcher, with a deep clinical and academic understanding of all fields of medicine, anatomy, and physiology. 
+            I have attached files containing a professional medical textbook (Nelson Textbook of Pediatrics, 22nd Edition).
+
+            The topic I am focusing on is: {topic}.
+            The lecture duration is: {duration}.
+
+            Your task is to conduct a comprehensive, broad, and in-depth review of the attached book context, locating all chapters, sub-chapters, and paragraphs relevant to this topic. Use your medical knowledge to identify chapters dealing with indirect contexts, mechanisms of action, underlying diseases, differential diagnoses, systemic effects, or any other relevant clinical context.
+
+            **CRITICAL AND STRICT RESTRICTION:** You are strictly forbidden from hallucinating or inventing any information, contexts, chapters, or page numbers. You must base your response entirely and exclusively (100%) on the exact content found within the attached files. 
             
             CALIBRATION DATA:
             {calibration_map}
-            
-            TASK:
-            1. Conduct a deep review of {topic}. Identify indirect contexts, mechanisms, and complications.
-            2. Explain why each section is related (based ONLY on the files).
-            3. Summarize in an organized table with:
-               - Chapter Name
-               - Chapter Number
-               - Printed Page Range (from actual page)
-               - File Index Page Range (PDF page number)
-            
+
+            For each relevant chapter or section:
+            1. Explain professionally why it is related to the topic (based only on the text in the files).
+            2. Detail which aspects of the topic (pathology, treatment, etc.) are covered.
+
+            After the review, summarize in an organized table:
+            - Chapter Name
+            - Chapter Number
+            - Printed Page Range (from actual page)
+            - File Index Page Range (PDF page number)
+
             Language: Hebrew prose, English medical terms.
             Conclude with: "האם תרצה שאבנה עבורך תיאור מקרה קליני (Clinical Case Study) או שאלות אמריקאיות (MCQs) לבחינת השליטה בחומר?"
             """
