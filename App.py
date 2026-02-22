@@ -2,18 +2,20 @@ import streamlit as st
 import json, urllib.request, time, io, re
 from pypdf import PdfReader, PdfWriter
 
-st.set_page_config(page_title="Nelson AI Lesson Planner", page_icon="🎓", layout="wide")
-st.title("🎓 Nelson AI Lesson Planner")
-st.markdown("### הכנת מערך שיעור מקיף וחילוץ פרקים אוטומטי")
+st.set_page_config(page_title="Nelson Deep-Lesson Architect", page_icon="🎓", layout="wide")
+st.title("🎓 Nelson AI Deep-Lesson Architect")
+st.markdown("### בניית מערך שיעור רפואי וחילוץ פרקים חכם מחמישה קבצים")
 
+# וידוא מפתח מהכספת
 try:
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
 except:
-    st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets.")
+    st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets של Streamlit.")
     st.stop()
 
-uploaded_files = st.file_uploader("העלה את חמשת חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
-topic = st.text_input("על איזה נושא נכין מערך שיעור מקיף?")
+# העלאת 5 קבצים במקביל
+uploaded_files = st.file_uploader("העלה את כל חמשת חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
+topic = st.text_input("מה הנושא למחקר עומק? (למשל: Rheumatic fever / T-cell deficiency)")
 
 def call_gemini(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
@@ -22,73 +24,71 @@ def call_gemini(prompt):
     try:
         with urllib.request.urlopen(req) as res:
             return json.loads(res.read())['candidates'][0]['content']['parts'][0]['text']
-    except: return "None"
+    except Exception as e:
+        return f"ERROR: {str(e)}"
 
-if st.button("בנה מערך שיעור וחלץ חומרים"):
-    if not uploaded_files or not topic:
-        st.warning("אנא העלה את קבצי הספר והזן נושא.")
+if st.button("התחל מחקר עומק וחילוץ"):
+    if len(uploaded_files) < 1 or not topic:
+        st.warning("אנא העלה קבצים והזן נושא.")
     else:
-        # שלב א': מחקר ותכנון מערך השיעור
-        with st.spinner("ה-AI חוקר את הנושא ובונה סילבוס מקיף..."):
-            plan_prompt = f"""
-            I want to create a comprehensive, serious medical lesson plan on '{topic}' based on Nelson Textbook of Pediatrics.
-            1. What are the essential clinical aspects to cover (Pathophysiology, Symptoms, Diagnosis, Treatment)?
-            2. What systemic involvements or complications should be included (e.g. if topic is Rheumatic Fever, include cardiology and nephrology)?
-            3. List 3-5 specific keywords or chapter titles I should look for in the textbook.
-            
-            Return a brief summary of the lesson plan first.
-            """
-            lesson_plan = call_gemini(plan_prompt)
-            st.markdown("---")
-            st.subheader("📋 מתווה השיעור שהוכן:")
-            st.write(lesson_plan)
+        all_matches = []
+        final_writer = PdfWriter()
         
-        # שלב ב': מיפוי וחילוץ מכל הקבצים
-        with st.spinner("סורק את חמשת הקבצים לאיתור כל הפרקים הרלוונטיים..."):
-            final_writer = PdfWriter()
-            found_ranges = []
-            
-            # בניית מפה גלובלית (דגימה מכל הקבצים)
-            global_map = ""
+        with st.spinner("מבצע סריקה ראשונית לאיתור אזכורים בכל חמשת הקבצים..."):
+            global_context = ""
             for file in uploaded_files:
                 reader = PdfReader(file)
-                # דגימה רחבה יותר בגלל חשיבות המשימה
-                for i in range(0, len(reader.pages), 15):
+                # דגימה כל 10 עמודים לזיהוי מבנה
+                for i in range(0, len(reader.pages), 10):
                     text = reader.pages[i].extract_text()
-                    if text: global_map += f"\n[FILE:{file.name}][PAGE:{i+1}] {text[:600]}\n"
+                    if text and topic.lower()[:5] in text.lower(): # חיפוש התחלתי גמיש
+                        global_context += f"\n[FILE: {file.name}][PAGE: {i+1}] {text[:800]}\n"
 
-            extraction_prompt = f"""
-            Based on the lesson plan for '{topic}', identify ALL full chapters across these files.
-            You must find:
-            1. The main chapter.
-            2. Related chapters (complications, systemic effects).
+        # שלב א': מחקר עומק ותכנון סילבוס
+        with st.spinner("ה-AI מבצע כעת מחקר עומק לבניית מערך שיעור מקיף..."):
+            research_prompt = f"""
+            As a Senior Medical Professor, your task is to design a high-level, comprehensive lesson plan for '{topic}' using the Nelson Textbook of Pediatrics.
             
-            Global Map: {global_map[:50000]}
+            Based on the detected snippets in the uploaded files:
+            {global_context[:40000]}
             
-            Return the results ONLY in this format: 
-            FILENAME: START_PAGE-END_PAGE, FILENAME: START_PAGE-END_PAGE
+            YOUR MISSION:
+            1. Research the scope: What chapters must a student read to master '{topic}'? 
+            Include the primary disease chapter, but also systemic involvements (e.g. cardiac, renal, or neurological chapters if they cover important complications of '{topic}').
+            2. Build a Syllabus: Break down the lesson into 'Pathophysiology', 'Clinical Manifestations', and 'Organ-Specific Complications'.
+            3. Chapter Mapping: List the exact filenames and page ranges (START-END) for EACH full chapter needed for this deep lesson.
+            
+            Return the output in this strict format for the app:
+            PLAN: [A brief summary of your clinical research and why you chose these chapters]
+            EXTRACT: [FILENAME]: [START]-[END], [FILENAME]: [START]-[END]
             """
             
-            res = call_gemini(extraction_prompt).strip()
-            # חילוץ הוראות החיתוך
-            matches = re.findall(r'([\w.-]+):\s*(\d+-\d+)', res)
+            full_res = call_gemini(research_prompt)
             
-            if matches:
-                st.subheader("📂 פרקים שנבחרו לחילוץ:")
-                for filename, page_range in matches:
-                    st.write(f"- קובץ: **{filename}**, עמודים: **{page_range}**")
-                    
-                    # ביצוע החיתוך בפועל
+            if "EXTRACT:" in full_res:
+                st.markdown("---")
+                st.subheader("📑 תוצאות מחקר העומק ומערך השיעור:")
+                plan_part = full_res.split("EXTRACT:")[0].replace("PLAN:", "").strip()
+                st.write(plan_part)
+                
+                # שלב ב': חיתוך וייצוא
+                st.markdown("---")
+                st.subheader("📦 מכין את מארז הלימוד המלא...")
+                
+                raw_extract = full_res.split("EXTRACT:")[-1].strip()
+                extractions = re.findall(r'([\w.-]+):\s*(\d+)-(\d+)', raw_extract)
+                
+                for filename, start_p, end_p in extractions:
                     target_file = next((f for f in uploaded_files if f.name == filename), None)
                     if target_file:
+                        st.write(f"✂️ מחלץ פרק מקובץ: **{filename}** (עמודים {start_p}-{end_p})")
                         target_reader = PdfReader(target_file)
-                        s, e = map(int, page_range.split('-'))
-                        for p in range(max(0, s-1), min(e, len(target_reader.pages))):
+                        for p in range(int(start_p)-1, min(int(end_p), len(target_reader.pages))):
                             final_writer.add_page(target_reader.pages[p])
                 
                 output = io.BytesIO()
                 final_writer.write(output)
-                st.success("מערך השיעור והחומרים המקצועיים מוכנים!")
-                st.download_button(f"📥 הורד מארז שיעור מלא: {topic}", output.getvalue(), f"{topic}_Full_Lesson_Pack.pdf")
+                st.success("מערך השיעור המקיף והפרקים הרלוונטיים מוכנים להורדה!")
+                st.download_button(f"📥 הורד מארז שיעור מקיף: {topic}", output.getvalue(), f"{topic}_Deep_Lesson.pdf")
             else:
-                st.error("ה-AI לא הצליח לאתר פרקים תואמים לסילבוס שבנה. נסה נושא רחב יותר.")
+                st.error("ה-AI לא הצליח לגבש מערך שיעור מבוסס על הקבצים הקיימים. נסה נושא רחב יותר.")
