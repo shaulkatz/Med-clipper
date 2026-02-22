@@ -13,7 +13,7 @@ try:
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
     genai.configure(api_key=api_key)
     # הגדרת המודל
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = model = genai.GenerativeModel("gemini-1.5-flash-latest")
 except Exception as e:
     st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets של Streamlit.")
     st.stop()
