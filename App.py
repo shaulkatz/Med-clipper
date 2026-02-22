@@ -1,31 +1,20 @@
 import streamlit as st
 import json, urllib.request
 
-st.title("🚀 בדיקת חיבור יציב ל-Gemini")
-
-if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("❌ המפתח לא נמצא ב-Secrets!")
-    st.stop()
+st.title("🔍 זיהוי מודלים זמינים")
 
 api_key = st.secrets["GOOGLE_API_KEY"].strip()
 
-if st.button("נסה להתחבר עכשיו"):
-    # שינוי הכתובת לגרסה v1 היציבה
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
-    payload = {"contents": [{"parts": [{"text": "Connected successfully?"}]}]}
-    data = json.dumps(payload).encode('utf-8')
-    
-    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+if st.button("הצג רשימת מודלים"):
+    # פנייה לכתובת שרשומה בשגיאה כדי לראות מה זמין
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     
     try:
+        req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req) as res:
-            result = json.loads(res.read().decode('utf-8'))
-            answer = result['candidates'][0]['content']['parts'][0]['text']
-            st.success(f"🎉 הצלחנו! גמיני מחובר ועונה: {answer}")
-            st.balloons()
-    except urllib.error.HTTPError as e:
-        st.error(f"❌ שגיאת שרת {e.code}")
-        st.code(e.read().decode())
+            data = json.loads(res.read().decode())
+            st.success("נמצאו המודלים הבאים:")
+            for model in data.get('models', []):
+                st.write(f"- `{model['name']}`")
     except Exception as e:
-        st.error(f"❌ שגיאה כללית: {str(e)}")
+        st.error(f"שגיאה בשליפת המודלים: {str(e)}")
