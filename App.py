@@ -2,19 +2,18 @@ import streamlit as st
 import json, urllib.request, time, io, re
 from pypdf import PdfReader, PdfWriter
 
-st.set_page_config(page_title="Med Clipper Super-Mapper", page_icon="🧬")
-st.title("🧬 Med Clipper: Full Chapter Mapper")
-st.markdown("### חילוץ רב-מערכתי: מוצא את כל הפרקים המלאים שקשורים לנושא")
+st.set_page_config(page_title="Nelson AI Lesson Planner", page_icon="🎓", layout="wide")
+st.title("🎓 Nelson AI Lesson Planner")
+st.markdown("### הכנת מערך שיעור מקיף וחילוץ פרקים אוטומטי")
 
-# משיכת המפתח מהכספת
 try:
-    api_key = st.secrets["GOOGLE_API_KEY"]
+    api_key = st.secrets["GOOGLE_API_KEY"].strip()
 except:
-    st.error("לא נמצא מפתח ב-Secrets. וודא שהגדרת GOOGLE_API_KEY.")
+    st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets.")
     st.stop()
 
-uploaded_file = st.file_uploader("העלה ספר PDF (נלסון המלא או חלקים)", type="pdf")
-topic = st.text_input("מה הנושא? (למשל: Rheumatic fever)")
+uploaded_files = st.file_uploader("העלה את חמשת חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
+topic = st.text_input("על איזה נושא נכין מערך שיעור מקיף?")
 
 def call_gemini(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
@@ -25,67 +24,71 @@ def call_gemini(prompt):
             return json.loads(res.read())['candidates'][0]['content']['parts'][0]['text']
     except: return "None"
 
-if st.button("בצע מיפוי וחילוץ"):
-    if uploaded_file and topic:
-        reader = PdfReader(uploaded_file)
-        total_pages = len(reader.pages)
+if st.button("בנה מערך שיעור וחלץ חומרים"):
+    if not uploaded_files or not topic:
+        st.warning("אנא העלה את קבצי הספר והזן נושא.")
+    else:
+        # שלב א': מחקר ותכנון מערך השיעור
+        with st.spinner("ה-AI חוקר את הנושא ובונה סילבוס מקיף..."):
+            plan_prompt = f"""
+            I want to create a comprehensive, serious medical lesson plan on '{topic}' based on Nelson Textbook of Pediatrics.
+            1. What are the essential clinical aspects to cover (Pathophysiology, Symptoms, Diagnosis, Treatment)?
+            2. What systemic involvements or complications should be included (e.g. if topic is Rheumatic Fever, include cardiology and nephrology)?
+            3. List 3-5 specific keywords or chapter titles I should look for in the textbook.
+            
+            Return a brief summary of the lesson plan first.
+            """
+            lesson_plan = call_gemini(plan_prompt)
+            st.markdown("---")
+            st.subheader("📋 מתווה השיעור שהוכן:")
+            st.write(lesson_plan)
         
-        with st.spinner("ה-Gem סורק את הספר ומזהה את כל הפרקים הרלוונטיים (ראשיים וסיבוכים)..."):
-            # דגימה צפופה לזיהוי מבנה (כל 8 עמודים)
-            map_data = ""
-            for i in range(0, total_pages, 8):
-                text = reader.pages[i].extract_text()
-                if text:
-                    map_data += f"\n[PDF_INDEX_{i+1}] {text[:1000]}\n"
+        # שלב ב': מיפוי וחילוץ מכל הקבצים
+        with st.spinner("סורק את חמשת הקבצים לאיתור כל הפרקים הרלוונטיים..."):
+            final_writer = PdfWriter()
+            found_ranges = []
+            
+            # בניית מפה גלובלית (דגימה מכל הקבצים)
+            global_map = ""
+            for file in uploaded_files:
+                reader = PdfReader(file)
+                # דגימה רחבה יותר בגלל חשיבות המשימה
+                for i in range(0, len(reader.pages), 15):
+                    text = reader.pages[i].extract_text()
+                    if text: global_map += f"\n[FILE:{file.name}][PAGE:{i+1}] {text[:600]}\n"
 
-            # פרומפט "הרופא הבלש"
-            mapping_prompt = f"""
-            You are a Medical Librarian Gem. I am studying '{topic}'. 
-            This disease often has primary chapters and secondary complications in other chapters (e.g., Kidney, Joints, Heart).
+            extraction_prompt = f"""
+            Based on the lesson plan for '{topic}', identify ALL full chapters across these files.
+            You must find:
+            1. The main chapter.
+            2. Related chapters (complications, systemic effects).
             
-            Based on this map:
-            {map_data[:45000]}
+            Global Map: {global_map[:50000]}
             
-            Mission:
-            1. Find the PRIMARY chapter for '{topic}'.
-            2. Find any OTHER chapters where significant complications of '{topic}' are discussed (e.g. Nephrology).
-            3. For EACH found section, identify the FULL chapter boundaries (Start PDF Page to End PDF Page).
-            4. Ensure you capture the ENTIRE chapter, not just the page with the keyword.
-            
-            Return ONLY a list of ranges: 'start-end, start-end'. If not found, return 'None'.
+            Return the results ONLY in this format: 
+            FILENAME: START_PAGE-END_PAGE, FILENAME: START_PAGE-END_PAGE
             """
             
-            res = call_gemini(mapping_prompt).strip()
-            ranges = re.findall(r'\d+-\d+', res)
+            res = call_gemini(extraction_prompt).strip()
+            # חילוץ הוראות החיתוך
+            matches = re.findall(r'([\w.-]+):\s*(\d+-\d+)', res)
             
-            if ranges:
-                st.success(f"איתרתי {len(ranges)} פרקים מלאים רלוונטיים: {', '.join(ranges)}")
-                writer = PdfWriter()
-                pages_added = set()
-                
-                # יצירת דף תוכן עניינים פנימי
-                for r in ranges:
-                    try:
-                        start_p, end_p = map(int, r.split('-'))
-                        # וידוא גבולות
-                        start_p = max(1, start_p)
-                        end_p = min(total_pages, end_p)
-                        
-                        # הוספת העמודים לקובץ החדש
-                        for p in range(start_p - 1, end_p):
-                            if p not in pages_added:
-                                writer.add_page(reader.pages[p])
-                                pages_added.add(p)
-                    except: continue
+            if matches:
+                st.subheader("📂 פרקים שנבחרו לחילוץ:")
+                for filename, page_range in matches:
+                    st.write(f"- קובץ: **{filename}**, עמודים: **{page_range}**")
+                    
+                    # ביצוע החיתוך בפועל
+                    target_file = next((f for f in uploaded_files if f.name == filename), None)
+                    if target_file:
+                        target_reader = PdfReader(target_file)
+                        s, e = map(int, page_range.split('-'))
+                        for p in range(max(0, s-1), min(e, len(target_reader.pages))):
+                            final_writer.add_page(target_reader.pages[p])
                 
                 output = io.BytesIO()
-                writer.write(output)
-                st.download_button(f"📥 הורד מארז פרקים: {topic}", output.getvalue(), f"{topic}_Full_Study_Pack.pdf")
-                
-                with st.expander("ראה מה ה-Gem מצא (תצוגה מקדימה)"):
-                    for r in ranges:
-                        s = int(r.split('-')[0])
-                        st.markdown(f"**פרק המתחיל בעמוד {s}:**")
-                        st.write(reader.pages[s-1].extract_text()[:600] + "...")
+                final_writer.write(output)
+                st.success("מערך השיעור והחומרים המקצועיים מוכנים!")
+                st.download_button(f"📥 הורד מארז שיעור מלא: {topic}", output.getvalue(), f"{topic}_Full_Lesson_Pack.pdf")
             else:
-                st.error("ה-Gem לא הצליח למפות פרקים רלוונטיים בקובץ זה.")
+                st.error("ה-AI לא הצליח לאתר פרקים תואמים לסילבוס שבנה. נסה נושא רחב יותר.")
