@@ -1,54 +1,63 @@
 import streamlit as st
 import json, urllib.request, io
-from pypdf import PdfReader
 
-st.set_page_config(page_title="Gemini Connectivity Test", page_icon="🔍")
-st.title("🔍 בדיקת תקשורת וזיהוי תוכן")
-
-# וידוא מפתח מהכספת
+# בדיקה 1: האם הספרייה מותקנת?
 try:
-    api_key = st.secrets["GOOGLE_API_KEY"].strip()
-except:
-    st.error("שגיאה: לא נמצא מפתח ב-Secrets. וודא שהגדרת GOOGLE_API_KEY.")
+    from pypdf import PdfReader
+    st.success("✅ ספריית pypdf נמצאה")
+except ImportError:
+    st.error("❌ ספריית pypdf חסרה! וודא שיש לך קובץ requirements.txt עם המילה pypdf")
     st.stop()
 
-# העלאת קבצים
-uploaded_files = st.file_uploader("העלה את הקבצים לבדיקה", type="pdf", accept_multiple_files=True)
+st.title("🛠️ אבחון תקלות - שלב אחר שלב")
 
-def call_gemini(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    data = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
-    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req) as res:
-            return json.loads(res.read())['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        return f"שגיאת תקשורת: {str(e)}"
+# בדיקה 2: האם המפתח קיים?
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("❌ המפתח GOOGLE_API_KEY לא נמצא ב-Secrets של Streamlit")
+    st.stop()
+else:
+    st.success("✅ מפתח API נמצא בכספת")
 
-if st.button("בדוק מה הנושא הכללי"):
+uploaded_files = st.file_uploader("העלה קובץ אחד לבדיקה", type="pdf", accept_multiple_files=True)
+
+if st.button("הפעל בדיקת מערכת"):
     if not uploaded_files:
-        st.warning("אנא העלה לפחות קובץ אחד.")
+        st.warning("אנא העלה קובץ")
     else:
-        combined_samples = ""
+        # בדיקה 3: האם ניתן לקרוא את ה-PDF?
+        st.write("---")
+        st.write("🔍 מנסה לקרוא את הקבצים...")
         
-        with st.spinner("דוגם טקסט ושולח לבדיקה..."):
-            for file in uploaded_files:
-                try:
-                    reader = PdfReader(file)
-                    # לוקח דגימה קטנה מהעמוד הראשון של כל קובץ
-                    sample_text = reader.pages[0].extract_text()[:1000]
-                    combined_samples += f"\n--- תוכן מקובץ {file.name} ---\n{sample_text}\n"
-                except Exception as e:
-                    st.error(f"שגיאה בקריאת הקובץ {file.name}: {e}")
+        combined_text = ""
+        for f in uploaded_files:
+            try:
+                reader = PdfReader(f)
+                first_page = reader.pages[0].extract_text()
+                if first_page:
+                    st.write(f"✅ הצלחתי לקרוא את עמוד 1 מקובץ: {f.name}")
+                    combined_text += first_page[:500]
+                else:
+                    st.warning(f"⚠️ הקובץ {f.name} נקרא, אבל לא נמצא בו טקסט (אולי סרוק כתמונה?)")
+            except Exception as e:
+                st.error(f"❌ שגיאה בקריאת {f.name}: {str(e)}")
 
-            # הפרומפט הכי פשוט שיש
-            test_prompt = f"""
-            Identify the general topic of these file samples and tell me what book or document this is:
-            {combined_samples}
-            """
+        # בדיקה 4: האם Gemini עונה?
+        if combined_text:
+            st.write("---")
+            st.write("📡 שולח בקשה ל-Gemini...")
             
-            response = call_gemini(test_prompt)
+            api_key = st.secrets["GOOGLE_API_KEY"].strip()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
             
-            st.markdown("---")
-            st.subheader("תשובת Gemini:")
-            st.info(response)
+            prompt = f"Identify the book from this text: {combined_text}"
+            data = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+            
+            try:
+                req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(req) as res:
+                    raw_res = json.loads(res.read())
+                    answer = raw_res['candidates'][0]['content']['parts'][0]['text']
+                    st.success("🎉 Gemini ענה בהצלחה!")
+                    st.info(f"התשובה שלו: {answer}")
+            except Exception as e:
+                st.error(f"❌ שגיאה בפנייה ל-Gemini: {str(e)}")
