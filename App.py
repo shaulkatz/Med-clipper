@@ -1,29 +1,32 @@
 import streamlit as st
-import json, urllib.request, time, io, re
+import io, re
 from pypdf import PdfReader, PdfWriter
+import google.generativeai as genai
 
+# הגדרות תצוגת הדף
 st.set_page_config(page_title="Nelson Deep-Lesson Architect", page_icon="🎓", layout="wide")
 st.title("🎓 Nelson AI Deep-Lesson Architect")
 st.markdown("### בניית מערך שיעור רפואי וחילוץ פרקים חכם מחמישה קבצים")
 
-# וידוא מפתח מהכספת
+# וידוא מפתח מהכספת (Secrets) של Streamlit
 try:
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
-except:
+    genai.configure(api_key=api_key)
+    # הגדרת המודל
+    model = genai.GenerativeModel("gemini-1.5-flash")
+except Exception as e:
     st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets של Streamlit.")
     st.stop()
 
-# העלאת 5 קבצים במקביל
-uploaded_files = st.file_uploader("העלה את כל חמשת חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
+# העלאת קבצים
+uploaded_files = st.file_uploader("העלה את כל חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
 topic = st.text_input("מה הנושא למחקר עומק? (למשל: Rheumatic fever / T-cell deficiency)")
 
 def call_gemini(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    data = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
-    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    """קריאה ל-Gemini באמצעות ה-SDK הרשמי במקום בקשת HTTP ישירה"""
     try:
-        with urllib.request.urlopen(req) as res:
-            return json.loads(res.read())['candidates'][0]['content']['parts'][0]['text']
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
         return f"ERROR: {str(e)}"
 
@@ -31,17 +34,17 @@ if st.button("התחל מחקר עומק וחילוץ"):
     if len(uploaded_files) < 1 or not topic:
         st.warning("אנא העלה קבצים והזן נושא.")
     else:
-        all_matches = []
         final_writer = PdfWriter()
         
-        with st.spinner("מבצע סריקה ראשונית לאיתור אזכורים בכל חמשת הקבצים..."):
+        with st.spinner("מבצע סריקה ראשונית לאיתור אזכורים בקבצים..."):
             global_context = ""
             for file in uploaded_files:
                 reader = PdfReader(file)
-                # דגימה כל 10 עמודים לזיהוי מבנה
+                # דגימה כל 10 עמודים לזיהוי מבנה - הגבלת אורך למניעת עומס
                 for i in range(0, len(reader.pages), 10):
                     text = reader.pages[i].extract_text()
-                    if text and topic.lower()[:5] in text.lower(): # חיפוש התחלתי גמיש
+                    if text and topic.lower()[:5] in text.lower():
+                        # הוספת תזכורת לשם הקובץ והעמוד
                         global_context += f"\n[FILE: {file.name}][PAGE: {i+1}] {text[:800]}\n"
 
         # שלב א': מחקר עומק ותכנון סילבוס
@@ -54,7 +57,7 @@ if st.button("התחל מחקר עומק וחילוץ"):
             
             YOUR MISSION:
             1. Research the scope: What chapters must a student read to master '{topic}'? 
-            Include the primary disease chapter, but also systemic involvements (e.g. cardiac, renal, or neurological chapters if they cover important complications of '{topic}').
+            Include the primary disease chapter, but also systemic involvements.
             2. Build a Syllabus: Break down the lesson into 'Pathophysiology', 'Clinical Manifestations', and 'Organ-Specific Complications'.
             3. Chapter Mapping: List the exact filenames and page ranges (START-END) for EACH full chapter needed for this deep lesson.
             
@@ -76,19 +79,36 @@ if st.button("התחל מחקר עומק וחילוץ"):
                 st.subheader("📦 מכין את מארז הלימוד המלא...")
                 
                 raw_extract = full_res.split("EXTRACT:")[-1].strip()
-                extractions = re.findall(r'([\w.-]+):\s*(\d+)-(\d+)', raw_extract)
+                # ביטוי רגולרי גמיש יותר שמאפשר רווחים בשמות קבצים
+                extractions = re.findall(r'([^:,]+):\s*(\d+)-(\d+)', raw_extract)
                 
+                files_found = False
                 for filename, start_p, end_p in extractions:
-                    target_file = next((f for f in uploaded_files if f.name == filename), None)
+                    filename = filename.strip()
+                    target_file = next((f for f in uploaded_files if f.name.strip() == filename), None)
                     if target_file:
+                        files_found = True
                         st.write(f"✂️ מחלץ פרק מקובץ: **{filename}** (עמודים {start_p}-{end_p})")
                         target_reader = PdfReader(target_file)
-                        for p in range(int(start_p)-1, min(int(end_p), len(target_reader.pages))):
+                        
+                        start_idx = max(0, int(start_p) - 1)
+                        end_idx = min(int(end_p), len(target_reader.pages))
+                        
+                        for p in range(start_idx, end_idx):
                             final_writer.add_page(target_reader.pages[p])
                 
-                output = io.BytesIO()
-                final_writer.write(output)
-                st.success("מערך השיעור המקיף והפרקים הרלוונטיים מוכנים להורדה!")
-                st.download_button(f"📥 הורד מארז שיעור מקיף: {topic}", output.getvalue(), f"{topic}_Deep_Lesson.pdf")
+                if files_found:
+                    output = io.BytesIO()
+                    final_writer.write(output)
+                    st.success("מערך השיעור המקיף והפרקים הרלוונטיים מוכנים להורדה!")
+                    st.download_button(
+                        label=f"📥 הורד מארז שיעור מקיף: {topic}", 
+                        data=output.getvalue(), 
+                        file_name=f"{topic}_Deep_Lesson.pdf",
+                        mime="application/pdf"
+                    )
+                else:
+                    st.warning("ה-AI ייצר את התוכנית, אך שמות הקבצים שחזר לא תאמו בדיוק לקבצים שהועלו. אנא בדוק את הפלט למעלה.")
             else:
-                st.error("ה-AI לא הצליח לגבש מערך שיעור מבוסס על הקבצים הקיימים. נסה נושא רחב יותר.")
+                st.error("ה-AI לא הצליח לגבש מערך שיעור לפי הפורמט הנדרש. שגיאה בפלט:")
+                st.code(full_res)
