@@ -1,27 +1,38 @@
 import streamlit as st
-import json, urllib.request, re
+import json, urllib.request, os, gdown, re
+import pandas as pd
 from pypdf import PdfReader
 
-st.set_page_config(page_title="Nelson 100% Accuracy", page_icon="⚖️", layout="wide")
-st.title("⚖️ Nelson AI: מאמת העמודים הרפואי")
+# --- הגדרות דף ---
+st.set_page_config(page_title="Nelson Senior Expert", page_icon="🔬", layout="wide")
 
-if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("❌ חסר מפתח API ב-Secrets!")
-    st.stop()
+# --- הזן כאן את ה-IDs שחילצת מהאייפד ---
+DRIVE_FILES = {
+    "Nelson Part 1": "YOUR_ID_HERE_1",
+    "Nelson Part 2": "YOUR_ID_HERE_2",
+    "Nelson Part 3": "YOUR_ID_HERE_3",
+    "Nelson Part 4": "YOUR_ID_HERE_4",
+    "Nelson Part 5": "YOUR_ID_HERE_5",
+}
 
-uploaded_files = st.file_uploader("העלה את חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
-topic = st.text_input("הזן נושא למחקר (למשל: Measles complications):")
+# --- פונקציות תשתית ---
 
-def find_text_in_pdf(reader, search_term):
-    """מחפש מחרוזת ב-PDF ומחזיר את מספר עמוד ה-PDF האמיתי"""
-    search_term = search_term.lower()
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text().lower()
-        if search_term in text:
-            return i + 1  # מחזיר עמוד PDF (מתחיל ב-1)
-    return None
+@st.cache_resource
+def setup_library():
+    """מוריד את הספרים מהדרייב לשרת פעם אחת בלבד"""
+    local_files = []
+    for name, f_id in DRIVE_FILES.items():
+        url = f'https://drive.google.com/uc?id={f_id}'
+        path = f"{name.replace(' ', '_')}.pdf"
+        if not os.path.exists(path):
+            gdown.download(url, path, quiet=True)
+        local_files.append({"name": name, "path": path})
+    return local_files
 
 def call_gemini(prompt):
+    """פנייה ל-API של גוגל"""
+    if "GOOGLE_API_KEY" not in st.secrets:
+        return "Error: Missing API Key"
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -34,72 +45,69 @@ def call_gemini(prompt):
     except Exception as e:
         return f"Error: {str(e)}"
 
-if st.button("בצע סריקה ואימות עמודים") and uploaded_files and topic:
-    status = st.empty()
-    
-    # שלב 1: חילוץ שמות פרקים וראשי פרקים מכל קובץ (רק התחלה של כל קובץ)
-    status.info("🔍 בונה אינדקס שמות פרקים מתוך הקבצים...")
-    book_index = ""
-    for f in uploaded_files:
-        reader = PdfReader(f)
-        # דוגמים רק עמודי אינדקס/תוכן בתחילת הקובץ
-        index_sample = ""
-        for i in range(min(10, len(reader.pages))):
-            index_sample += reader.pages[i].extract_text()
-        book_index += f"\nFILE: {f.name}\nINDEX SAMPLE: {index_sample[:2000]}\n"
+# --- ממשק משתמש ---
+st.title("🔬 Nelson AI: Senior Medical Expert Researcher")
+st.markdown("### מערכת מחקר ותכנון הרצאות מבוססת Nelson Textbook (22nd Ed)")
 
-    # שלב 2: גמיני מוצא את שמות הפרקים הרלוונטיים (בלי לנחש עמודים!)
-    discovery_prompt = f"""
-    You are a medical librarian. Based on these index samples from Nelson Textbook:
-    {book_index}
-    
-    The user is researching: '{topic}'.
-    
-    Identify the EXACT titles of the 3-5 most relevant chapters or sub-headings. 
-    Return ONLY a JSON list of strings. Example: ["Chapter 352: Measles", "Complications of Measles"].
-    """
-    
-    status.info("גמיני מזהה את שמות הפרקים הרלוונטיים...")
-    chapters_raw = call_gemini(discovery_prompt)
-    
-    # ניקוי ה-JSON מהתשובה
-    try:
-        chapter_titles = json.loads(re.search(r'\[.*\]', chapters_raw, re.DOTALL).group())
-    except:
-        st.error("ה-AI לא הצליח לגבש רשימת פרקים. נסה נושא ספציפי יותר.")
-        st.stop()
+with st.sidebar:
+    st.header("⏱️ הגדרות זמן")
+    duration = st.text_input("מה משך הזמן המוקצב להרצאה?", placeholder="למשל: 30 minutes")
+    st.markdown("---")
+    if st.button("רענן ספרייה"):
+        st.cache_resource.clear()
+        st.rerun()
 
-    # שלב 3: פייתון מחפש את הפרקים בתוך ה-PDF כדי למצוא עמודים אמיתיים
-    status.info("🛠️ מאמת עמודים פיזיים בתוך ה-PDF...")
-    verified_results = []
-    
-    for title in chapter_titles:
-        for f in uploaded_files:
-            reader = PdfReader(f)
-            pdf_page = find_text_in_pdf(reader, title)
-            if pdf_page:
-                # חילוץ הטקסט מהעמוד כדי למצוא את המספר המודפס (Printed Page)
-                page_text = reader.pages[pdf_page-1].extract_text()
-                # רגקס לחיפוש מספר עמוד מודפס (בדרך כלל 3-4 ספרות בפינה)
-                printed_page_match = re.search(r'\b\d{4}\b', page_text)
-                printed_page = printed_page_match.group() if printed_page_match else "Unknown"
-                
-                verified_results.append({
-                    "Chapter": title,
-                    "File": f.name,
-                    "PDF Page": pdf_page,
-                    "Printed Page": printed_page
-                })
-                break
+topic = st.text_input("הזן נושא למחקר מקיף ומעמיק:")
 
-    # תצוגת התוצאות בטבלה
-    if verified_results:
-        st.markdown("---")
-        st.subheader(f"✅ תוצאות מאומתות עבור: {topic}")
-        df = pd.DataFrame(verified_results)
-        st.table(df)
-        
-        st.success("העמודים בטבלה זו נסרקו פיזית על ידי המערכת והם מדויקים.")
+# --- לוגיקת המחקר ---
+if st.button("בצע מחקר עומק ואימות מקורות"):
+    # 1. בדיקת ה-Guardrail (זמן ההרצאה)
+    if not duration:
+        st.warning("⚠️ מה משך הזמן המוקצב להרצאה?")
+    elif not topic:
+        st.error("אנא הזן נושא למחקר.")
     else:
-        st.warning("לא נמצאו התאמות מדויקות. נסה להזין שם פרק כפי שהוא מופיע בספר.")
+        with st.spinner("טוען את הספרייה ומכייל עמודים..."):
+            library = setup_library()
+            
+            # 2. בניית Calibration Map (עוגנים לדיוק עמודים)
+            calibration_data = ""
+            for book in library:
+                reader = PdfReader(book["path"])
+                # דגימת עמוד ראשון ואמצע למניעת סטיות
+                mid_page = len(reader.pages) // 2
+                sample_1 = reader.pages[0].extract_text()[:800]
+                sample_2 = reader.pages[mid_page].extract_text()[:800]
+                calibration_data += f"\nFILE: {book['name']}\n[PDF Page 1]: {sample_1}\n[PDF Page {mid_page}]: {sample_2}\n"
 
+        # 3. בניית הפרומפט המומחה שלך
+        full_expert_prompt = f"""
+You are a world-renowned medical expert and researcher, with a deep clinical and academic understanding of all fields of medicine, anatomy, and physiology. I have attached files containing a professional medical textbook (Nelson Textbook of Pediatrics, 22nd Edition).
+
+The topic I am focusing on is: {topic}.
+The lecture duration is: {duration}.
+
+Your task is to conduct a comprehensive, broad, and in-depth review of the attached book context, locating all chapters, sub-chapters, and paragraphs relevant to this topic. Use your medical knowledge to identify chapters dealing with indirect contexts, mechanisms of action, underlying diseases, differential diagnoses, systemic effects, or any other relevant clinical context.
+
+**CRITICAL AND STRICT RESTRICTION:** You are strictly forbidden from hallucinating or inventing any information, contexts, chapters, or page numbers. You must base your response entirely and exclusively (100%) on the exact content found within the attached files. Use the following context samples for calibration:
+{calibration_data}
+
+For each relevant chapter or section:
+1. Explain professionally why it is related to the topic (based only on the text in the files).
+2. Detail which aspects of the topic (pathology, treatment, etc.) are covered.
+
+After the review, summarize in an organized table:
+- Chapter Name
+- Chapter Number
+- Printed Page Range (from the actual page)
+- File Index Page Range (PDF page number)
+
+Language: Output in HEBREW, but all medical terms, diagnoses, and drug names MUST be in ENGLISH.
+Conclude by asking: "האם תרצה שאבנה עבורך תיאור מקרה קליני (Clinical Case Study) או שאלות אמריקאיות (MCQs) לבחינת השליטה בחומר?"
+"""
+
+        with st.spinner("הפרופסור מנתח את הספרייה... זה עשוי לקחת רגע..."):
+            response = call_gemini(full_expert_prompt)
+            st.markdown("---")
+            st.markdown(response)
+            st.success("המחקר הושלם בהצלחה!")
