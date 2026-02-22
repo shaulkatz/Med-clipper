@@ -8,11 +8,11 @@ st.set_page_config(page_title="Nelson Senior Expert", page_icon="🔬", layout="
 
 # --- הזן כאן את ה-IDs שחילצת מהאייפד ---
 DRIVE_FILES = {
-    "Nelson Part 1": "YOUR_ID_HERE_1",
-    "Nelson Part 2": "YOUR_ID_HERE_2",
-    "Nelson Part 3": "YOUR_ID_HERE_3",
-    "Nelson Part 4": "YOUR_ID_HERE_4",
-    "Nelson Part 5": "YOUR_ID_HERE_5",
+    "Nelson Part 1": "1QAcPOd_EZnIMN9AZKFhXTPycQb_3XtHa",
+    "Nelson Part 2": "1XgAmPZRspaFixuwZRUA9WRDtJe7UfGX6",
+    "Nelson Part 3": "1iEukcQ443jQeG35u4zSENFb_9vkhiCtx",
+    "Nelson Part 4": "1rgucmtUfSN6wUzpyptOilOi4LVykQQnt",
+    "Nelson Part 5": "1ru9-fs1MnTaa5vJzNV1sryj0hRxPy3_v",
 }
 
 # --- פונקציות תשתית ---
