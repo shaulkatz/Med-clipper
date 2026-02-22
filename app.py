@@ -1,8 +1,9 @@
 import streamlit as st
-import json, urllib.request, os, requests
+import requests
+import json
 
-# --- הגדרות דף ---
-st.set_page_config(page_title="Nelson Simple Ask", page_icon="📖")
+st.set_page_config(page_title="Nelson Diagnosis Tool", page_icon="🩺")
+st.title("🩺 Nelson AI: בדיקת מערכות")
 
 # ה-IDs שלך
 DRIVE_FILES = {
@@ -13,59 +14,47 @@ DRIVE_FILES = {
     "Nelson Part 5": "1ru9-fs1MnTaa5vJzNV1sryj0hRxPy3_v",
 }
 
-# הורדה בסיסית
-def download_files():
+# --- בדיקה 1: Google Drive ---
+st.header("1. בדיקת נגישות לקבצים (Drive)")
+if st.button("הרץ בדיקת קבצים"):
     for name, f_id in DRIVE_FILES.items():
-        path = f"{name.replace(' ', '_')}.pdf"
-        if not os.path.exists(path):
-            url = f'https://drive.google.com/uc?id={f_id}&export=download'
-            r = requests.get(url)
-            with open(path, 'wb') as f:
-                f.write(r.content)
-    return True
+        url = f'https://drive.google.com/uc?id={f_id}&export=download'
+        try:
+            # אנחנו בודקים רק את ה-Header כדי לא להוריד את כל הקובץ סתם
+            res = requests.head(url, allow_redirects=True)
+            if res.status_code == 200:
+                st.success(f"✅ {name}: מחובר וזמין!")
+            else:
+                st.error(f"❌ {name}: שגיאה {res.status_code} - בדוק שיתוף בדרייב")
+        except Exception as e:
+            st.error(f"❌ {name}: תקלה טכנית - {str(e)}")
 
-# פונקציית Gemini נקייה (תיקון ל-404 ו-429)
-def ask_gemini(question):
+st.markdown("---")
+
+# --- בדיקה 2: Gemini API ---
+st.header("2. בדיקת תקשורת עם Gemini")
+if st.button("שלח 'Ping' ל-Gemini"):
     if "GOOGLE_API_KEY" not in st.secrets:
-        return "שגיאה: חסר מפתח API ב-Secrets"
-    
-    api_key = st.secrets["GOOGLE_API_KEY"].strip()
-    # כתובת מעודכנת למניעת 404
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": f"You are a medical expert referencing the Nelson Textbook of Pediatrics 22nd Edition. Question: {question}. Answer in Hebrew, use English for medical terms. Be precise."
-            }]
-        }]
-    }
-    
-    headers = {'Content-Type': 'application/json'}
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"שגיאה מהשרת ({response.status_code}): {response.text}"
-    except Exception as e:
-        return f"תקלה בתקשורת: {str(e)}"
-
-# --- ממשק משתמש ---
-st.title("📖 Nelson AI: שאלות ותשובות")
-
-if st.sidebar.button("טען ספרייה מחדש"):
-    with st.spinner("מוריד קבצים..."):
-        download_files()
-    st.sidebar.success("הספרייה מוכנה!")
-
-question = st.text_area("מה תרצה לדעת מה-Nelson Textbook?", placeholder="למשל: סכם לי את הטיפול ב-Kawasaki Disease")
-
-if st.button("שאל את המומחה"):
-    if not question:
-        st.warning("אנא הזן שאלה.")
+        st.error("❌ המפתח GOOGLE_API_KEY לא נמצא ב-Secrets!")
     else:
-        with st.spinner("מנתח את המידע..."):
-            answer = ask_gemini(question)
-            st.markdown("---")
-            st.write(answer)
+        api_key = st.secrets["GOOGLE_API_KEY"].strip()
+        # הכתובת המדויקת ביותר למניעת 404
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        
+        payload = {"contents": [{"parts": [{"text": "say 'Connection Successful'"}]}]}
+        headers = {'Content-Type': 'application/json'}
+        
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                result = response.json()
+                msg = result['candidates'][0]['content']['parts'][0]['text']
+                st.success(f"✅ Gemini עונה: {msg}")
+            elif response.status_code == 429:
+                st.warning("⚠️ שגיאה 429: המכסה הסתיימה. חכה 60 שניות.")
+            elif response.status_code == 404:
+                st.error("❌ שגיאה 404: הכתובת של המודל לא נמצאה. נסה לשנות לגרסה אחרת.")
+            else:
+                st.error(f"❌ שגיאה {response.status_code}: {response.text}")
+        except Exception as e:
+            st.error(f"❌ תקלה בתקשורת: {str(e)}")
