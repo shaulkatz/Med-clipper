@@ -2,55 +2,70 @@ import streamlit as st
 import requests
 import json
 
-st.set_page_config(page_title="Nelson Simple Expert", page_icon="🩺")
-st.title("🩺 Nelson AI: שאלות ותשובות")
+st.set_page_config(page_title="Nelson Fixer", page_icon="🔧")
+st.title("🔧 Nelson AI: תיקון חיבור סופי")
 
-# פונקציית Gemini עם הכתובת המדויקת ביותר למניעת 404
-def ask_gemini(query):
-    if "GOOGLE_API_KEY" not in st.secrets:
-        return "❌ חסר מפתח API ב-Secrets"
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("❌ מפתח API חסר ב-Secrets!")
+    st.stop()
+
+api_key = st.secrets["GOOGLE_API_KEY"].strip()
+
+# פונקציה שמנסה למצוא איזה מודל עובד אצלך
+def get_working_model():
+    # רשימת מודלים אפשריים לפי סדר עדיפות
+    models_to_try = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-pro"
+    ]
     
-    api_key = st.secrets["GOOGLE_API_KEY"].strip()
-    
-    # שינוי ל-v1beta ושימוש ב-gemini-1.5-flash-latest
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        payload = {"contents": [{"parts": [{"text": "hi"}]}]}
+        try:
+            res = requests.post(url, json=payload, timeout=5)
+            if res.status_code == 200:
+                return model_name
+        except:
+            continue
+    return None
+
+# --- ממשק הבדיקה ---
+if st.button("בדוק איזה מודל זמין לי"):
+    with st.spinner("סורק מודלים של גוגל..."):
+        working_model = get_working_model()
+        if working_model:
+            st.success(f"✅ נמצא מודל עובד: `{working_model}`")
+            st.session_state['active_model'] = working_model
+        else:
+            st.error("❌ לא נמצא מודל זמין. בדוק אם המפתח תקין או אם יש חסימה בחשבון Google AI Studio.")
+
+st.markdown("---")
+
+# --- שליחת שאלה (אחרי שמצאנו מודל) ---
+question = st.text_input("שאל משהו את המומחה (למשל: מה זה נלסון?):")
+
+if st.button("שאל עכשיו"):
+    model = st.session_state.get('active_model', "gemini-1.5-flash")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"You are a pediatric expert. Based on Nelson Textbook of Pediatrics 22nd Edition, answer this: {query}. Answer in Hebrew, use English for medical terms."
+                "text": f"You are a medical expert referencing Nelson Pediatrics. Question: {question}. Answer in Hebrew."
             }]
         }]
     }
     
-    headers = {'Content-Type': 'application/json'}
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        elif response.status_code == 404:
-            return "❌ שגיאה 404: המודל לא נמצא. ננסה לעבור לגרסת Pro או לוודא את הכתובת."
-        elif response.status_code == 429:
-            return "⚠️ עומס על השרת (429). המתן דקה ונסה שוב."
-        else:
-            return f"שגיאה {response.status_code}: {response.text}"
-    except Exception as e:
-        return f"תקלה בתקשורת: {str(e)}"
-
-# --- ממשק פשוט ---
-st.info("✅ הדרייב מחובר. המערכת מוכנה לשאלות.")
-
-question = st.text_input("שאל שאלה רפואית מה-Nelson (למשל: Treatment for Acute Bronchiolitis):")
-
-if st.button("שאל את המומחה"):
-    if question:
-        with st.spinner("הפרופסור מנתח..."):
-            answer = ask_gemini(question)
-            st.markdown("---")
-            st.write(answer)
-    else:
-        st.warning("אנא הזן שאלה.")
-
-with st.sidebar:
-    st.write("מחובר ל-Google Drive (5 קבצים)")
+    with st.spinner("מתקשר עם Gemini..."):
+        try:
+            response = requests.post(url, json=payload)
+            if response.status_code == 200:
+                answer = response.json()['candidates'][0]['content']['parts'][0]['text']
+                st.info("תשובת המומחה:")
+                st.write(answer)
+            else:
+                st.error(f"שגיאה {response.status_code}: {response.text}")
+        except Exception as e:
+            st.error(f"תקלה: {str(e)}")
