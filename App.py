@@ -12,8 +12,8 @@ st.markdown("### בניית מערך שיעור רפואי וחילוץ פרקי
 try:
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
     genai.configure(api_key=api_key)
-    # הגדרת המודל
-    model = model = genai.GenerativeModel("gemini-1.5-flash-latest")
+    # שימוש במודל העדכני של גוגל
+    model = genai.GenerativeModel("gemini-2.5-flash")
 except Exception as e:
     st.error("שגיאה: וודא שהגדרת GOOGLE_API_KEY ב-Secrets של Streamlit.")
     st.stop()
@@ -23,7 +23,7 @@ uploaded_files = st.file_uploader("העלה את כל חלקי הספר (PDF)", 
 topic = st.text_input("מה הנושא למחקר עומק? (למשל: Rheumatic fever / T-cell deficiency)")
 
 def call_gemini(prompt):
-    """קריאה ל-Gemini באמצעות ה-SDK הרשמי במקום בקשת HTTP ישירה"""
+    """קריאה ל-Gemini באמצעות ה-SDK הרשמי"""
     try:
         response = model.generate_content(prompt)
         return response.text
@@ -44,7 +44,6 @@ if st.button("התחל מחקר עומק וחילוץ"):
                 for i in range(0, len(reader.pages), 10):
                     text = reader.pages[i].extract_text()
                     if text and topic.lower()[:5] in text.lower():
-                        # הוספת תזכורת לשם הקובץ והעמוד
                         global_context += f"\n[FILE: {file.name}][PAGE: {i+1}] {text[:800]}\n"
 
         # שלב א': מחקר עומק ותכנון סילבוס
@@ -79,7 +78,6 @@ if st.button("התחל מחקר עומק וחילוץ"):
                 st.subheader("📦 מכין את מארז הלימוד המלא...")
                 
                 raw_extract = full_res.split("EXTRACT:")[-1].strip()
-                # ביטוי רגולרי גמיש יותר שמאפשר רווחים בשמות קבצים
                 extractions = re.findall(r'([^:,]+):\s*(\d+)-(\d+)', raw_extract)
                 
                 files_found = False
