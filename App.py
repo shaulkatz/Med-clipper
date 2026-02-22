@@ -1,21 +1,21 @@
 import streamlit as st
 import json, urllib.request, re
-import pandas as pd
 from pypdf import PdfReader
 
-st.set_page_config(page_title="Nelson Lecture Architect", page_icon="🧬", layout="wide")
-st.title("🧬 Nelson AI: אדריכל ההרצאות המעמיק")
+st.set_page_config(page_title="Nelson Senior Educator", page_icon="🎓", layout="wide")
+st.title("🎓 Nelson AI: Senior Medical Educator")
 
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("❌ חסר מפתח API ב-Secrets!")
     st.stop()
 
-# ממשק משתמש
-col_a, col_b = st.columns([1, 2])
-with col_a:
+# ממשק משתמש משופר
+with st.sidebar:
+    st.header("⚙️ הגדרות הרצאה")
+    duration = st.text_input("משך זמן ההרצאה (למשל: 20 minutes):", placeholder="חובה להזין זמן")
     uploaded_files = st.file_uploader("העלה את חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
-with col_b:
-    topic = st.text_input("הזן נושא להרצאה מקיפה ומעמיקה:", placeholder="למשל: Comprehensive review of Kawasaki Disease")
+
+topic = st.text_input("הזן נושא להרצאה (STRICTLY Nelson 22nd Edition):")
 
 def call_gemini(prompt):
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
@@ -30,56 +30,51 @@ def call_gemini(prompt):
     except Exception as e:
         return f"Error: {str(e)}"
 
-if st.button("בנה מפת הרצאה מקיפה") and uploaded_files and topic:
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    # 1. בניית "מפת הקשר" (Context Mapping)
-    all_files_info = ""
-    for idx, f in enumerate(uploaded_files):
-        status_text.info(f"סורק ובודק הקשרים בקובץ: {f.name}...")
-        reader = PdfReader(f)
-        # דגימה רחבה יותר (התחלה, אמצע וסוף של כל קובץ)
-        sample_pages = [0, 1, len(reader.pages)//2, len(reader.pages)-1]
-        sample_text = ""
-        for p_idx in sample_pages:
-            try:
-                sample_text += reader.pages[p_idx].extract_text()[:800]
-            except: pass
-        all_files_info += f"\n--- FILENAME: {f.name} (Total: {len(reader.pages)} pages) ---\nSample Content: {sample_text}\n"
-        progress_bar.progress((idx + 1) / len(uploaded_files))
+if st.button("התחל תכנון הרצאה מבוסס מקורות"):
+    # בדיקת Guardrail: האם הוזן זמן?
+    if not duration:
+        st.warning("⚠️ מה משך הזמן המוקצב להרצאה?")
+    elif not uploaded_files or not topic:
+        st.error("אנא וודא שהעלית קבצים והזנת נושא.")
+    else:
+        status = st.empty()
+        
+        # שלב א': איסוף נתוני "עוגן" מהקבצים
+        status.info("🔍 מבצע Anchor Check ואימות מספרי עמודים...")
+        anchors_info = ""
+        for f in uploaded_files:
+            reader = PdfReader(f)
+            # קריאת העמוד הראשון של כל קובץ כדי למצוא את העמוד המודפס (עוגן)
+            first_page_text = reader.pages[0].extract_text()[:1500]
+            anchors_info += f"File: {f.name} | First Page Preview: {first_page_text}\n"
 
-    # 2. הפרומפט המורכב למחקר עומק
-    deep_research_prompt = f"""
-    You are a Senior Pediatric Professor preparing a high-level, comprehensive lecture for medical residents.
-    The topic is: '{topic}'.
-    
-    Based on the following files context from Nelson Textbook of Pediatrics:
-    {all_files_info}
-    
-    YOUR MISSION:
-    1. Analyze which chapters across ALL files are essential for a DEEP understanding of {topic} (include pathophysiology, clinical manifestation, and complications).
-    2. Create a detailed syllabus for a 60-minute lecture.
-    3. Map the EXACT files and page ranges for extraction.
-    
-    YOU MUST RETURN A MARKDOWN TABLE with these exact columns:
-    | File Name | Start Page | End Page | Topic Covered | Depth Level |
-    
-    Followed by a brief explanation of why you chose these sections.
-    """
-    
-    status_text.info("גמיני מבצע כעת מחקר עומק ובונה את הטבלה...")
-    research_results = call_gemini(deep_research_prompt)
-    
-    # 3. תצוגת תוצאות
-    st.markdown("---")
-    st.header(f"📋 תוכנית מחקר להרצאה: {topic}")
-    
-    # הצגת הטבלה והניתוח
-    st.markdown(research_results)
-    
-    status_text.success("המחקר הושלם בהצלחה!")
-    st.balloons()
-else:
-    if not uploaded_files:
-        st.info("אנא העלה את חמשת הקבצים כדי להתחיל במחקר.")
+        # שלב ב': בניית הפרומפט המורכב שסיפקת
+        full_system_prompt = f"""
+        Role: Senior Pediatric Medical Educator & Nelson Expert
+        
+        USER TOPIC: {topic}
+        LECTURE DURATION: {duration}
+        
+        FILES CONTEXT (ANCHOR DATA):
+        {anchors_info}
+        
+        Use the instructions below to execute the task:
+        1. Perform 'Step 1: Verified Source Mapping'.
+        2. Create 'Step 2: Customized Lecture Structure' for {duration}.
+        3. Generate 'Step 3: Learning & Mastery Chat Prompt'.
+        4. Generate 'Step 4: Presentation Architect Prompt'.
+        
+        Operational Rules:
+        - Output in HEBREW, professional terms in ENGLISH.
+        - Grounding: ONLY uploaded files.
+        - Accuracy: Never guess page numbers.
+        """
+        
+        result = call_gemini(full_system_prompt)
+        
+        st.markdown("---")
+        st.markdown(result)
+        
+        # הוספת הסיומת המחייבת
+        st.markdown("---")
+        st.info("האם תרצה שאבנה עבורך תיאור מקרה קליני (Clinical Case Study) או שאלות אמריקאיות (MCQs) לבחינת השליטה בחומר?")
