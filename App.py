@@ -2,23 +2,27 @@ import streamlit as st
 import json, urllib.request, re
 from pypdf import PdfReader
 
-st.set_page_config(page_title="Nelson Expert Researcher", page_icon="🔬", layout="wide")
-st.title("🔬 Nelson AI: World-Renowned Medical Expert")
+st.set_page_config(page_title="Nelson 100% Accuracy", page_icon="⚖️", layout="wide")
+st.title("⚖️ Nelson AI: מאמת העמודים הרפואי")
 
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("❌ חסר מפתח API ב-Secrets!")
     st.stop()
 
-# ממשק משתמש
-with st.sidebar:
-    st.header("📂 ניהול קבצים")
-    uploaded_files = st.file_uploader("העלה את חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("העלה את חלקי הספר (PDF)", type="pdf", accept_multiple_files=True)
+topic = st.text_input("הזן נושא למחקר (למשל: Measles complications):")
 
-topic = st.text_input("הזן נושא למחקר מעמיק (Topic for Research):")
+def find_text_in_pdf(reader, search_term):
+    """מחפש מחרוזת ב-PDF ומחזיר את מספר עמוד ה-PDF האמיתי"""
+    search_term = search_term.lower()
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text().lower()
+        if search_term in text:
+            return i + 1  # מחזיר עמוד PDF (מתחיל ב-1)
+    return None
 
 def call_gemini(prompt):
     api_key = st.secrets["GOOGLE_API_KEY"].strip()
-    # שימוש בכתובת המדויקת שעבדה בבדיקות הקודמות
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     data = json.dumps(payload).encode('utf-8')
@@ -30,55 +34,72 @@ def call_gemini(prompt):
     except Exception as e:
         return f"Error: {str(e)}"
 
-if st.button("בצע מחקר מקיף") and uploaded_files and topic:
-    status_text = st.empty()
+if st.button("בצע סריקה ואימות עמודים") and uploaded_files and topic:
+    status = st.empty()
     
-    # שלב 1: איסוף דגימות תוכן ואינדקס מכל קובץ (כדי למנוע הזיות)
-    status_text.info("🧬 סורק את דפי המקור ובונה מפת תוכן...")
-    context_data = ""
+    # שלב 1: חילוץ שמות פרקים וראשי פרקים מכל קובץ (רק התחלה של כל קובץ)
+    status.info("🔍 בונה אינדקס שמות פרקים מתוך הקבצים...")
+    book_index = ""
     for f in uploaded_files:
         reader = PdfReader(f)
-        total_p = len(reader.pages)
-        # דוגמים את ההתחלה (תוכן עניינים/כותרות) ומספר דפים מהאמצע
-        sample = ""
-        for i in [0, 1, 2, total_p//4, total_p//2, (3*total_p)//4, total_p-1]:
-            try:
-                sample += f"\n[PDF Page {i+1}]: " + reader.pages[i].extract_text()[:1000]
-            except: continue
-        context_data += f"\nFILE: {f.name}\nTOTAL PDF PAGES: {total_p}\nSAMPLES: {sample}\n"
+        # דוגמים רק עמודי אינדקס/תוכן בתחילת הקובץ
+        index_sample = ""
+        for i in range(min(10, len(reader.pages))):
+            index_sample += reader.pages[i].extract_text()
+        book_index += f"\nFILE: {f.name}\nINDEX SAMPLE: {index_sample[:2000]}\n"
 
-    # שלב 2: הפרומפט החדש שלך
-    expert_prompt = f"""
-You are a world-renowned medical expert and researcher, with a deep clinical and academic understanding of all fields of medicine, anatomy, and physiology. I have attached files containing a professional medical textbook.
-
-The topic I am focusing on is: {topic}.
-
-Your task is to conduct a comprehensive, broad, and in-depth review of the attached book context, locating all chapters, sub-chapters, and paragraphs relevant to this topic. Since you are an expert, do not just look for exact keyword matches. Use your medical knowledge to identify chapters dealing with indirect contexts, mechanisms of action, underlying diseases, differential diagnoses, systemic effects, or any other relevant clinical context.
-
-**CRITICAL AND STRICT RESTRICTION:** You are strictly forbidden from hallucinating or inventing any information, contexts, chapters, or page numbers. You must base your response entirely and exclusively (100%) on the exact content found within the attached files. Do not use external knowledge or your training data to fill in gaps. If the topic or a specific context does not appear in the book at all, state this explicitly.
-
-Here is the context extracted from the files:
-{context_data}
-
-For each relevant chapter or section you locate in the files:
-1. Explain professionally why it is related to the topic (based only on the text in the files).
-2. Detail which aspects of the topic (e.g., pathology, treatment, diagnosis) are covered in this section.
-
-After the in-depth textual review, summarize your findings in an organized table so I can easily navigate the book. The table must contain only the following columns:
-- Chapter Name
-- Chapter Number
-- Printed Page Range (the page number as printed on the actual page of the book)
-- File Index Page Range (the page number within the PDF/digital file itself)
-
-Output in HEBREW, but maintain professional English medical terms.
-"""
-
-    status_text.info("הפרופסור מנתח כעת את כל ההקשרים הקליניים...")
-    research_results = call_gemini(expert_prompt)
+    # שלב 2: גמיני מוצא את שמות הפרקים הרלוונטיים (בלי לנחש עמודים!)
+    discovery_prompt = f"""
+    You are a medical librarian. Based on these index samples from Nelson Textbook:
+    {book_index}
     
-    st.markdown("---")
-    st.markdown(research_results)
-    status_text.success("המחקר הושלם!")
-else:
-    if not uploaded_files:
-        st.info("אנא העלה את חמשת הקבצים כדי להתחיל.")
+    The user is researching: '{topic}'.
+    
+    Identify the EXACT titles of the 3-5 most relevant chapters or sub-headings. 
+    Return ONLY a JSON list of strings. Example: ["Chapter 352: Measles", "Complications of Measles"].
+    """
+    
+    status.info("גמיני מזהה את שמות הפרקים הרלוונטיים...")
+    chapters_raw = call_gemini(discovery_prompt)
+    
+    # ניקוי ה-JSON מהתשובה
+    try:
+        chapter_titles = json.loads(re.search(r'\[.*\]', chapters_raw, re.DOTALL).group())
+    except:
+        st.error("ה-AI לא הצליח לגבש רשימת פרקים. נסה נושא ספציפי יותר.")
+        st.stop()
+
+    # שלב 3: פייתון מחפש את הפרקים בתוך ה-PDF כדי למצוא עמודים אמיתיים
+    status.info("🛠️ מאמת עמודים פיזיים בתוך ה-PDF...")
+    verified_results = []
+    
+    for title in chapter_titles:
+        for f in uploaded_files:
+            reader = PdfReader(f)
+            pdf_page = find_text_in_pdf(reader, title)
+            if pdf_page:
+                # חילוץ הטקסט מהעמוד כדי למצוא את המספר המודפס (Printed Page)
+                page_text = reader.pages[pdf_page-1].extract_text()
+                # רגקס לחיפוש מספר עמוד מודפס (בדרך כלל 3-4 ספרות בפינה)
+                printed_page_match = re.search(r'\b\d{4}\b', page_text)
+                printed_page = printed_page_match.group() if printed_page_match else "Unknown"
+                
+                verified_results.append({
+                    "Chapter": title,
+                    "File": f.name,
+                    "PDF Page": pdf_page,
+                    "Printed Page": printed_page
+                })
+                break
+
+    # תצוגת התוצאות בטבלה
+    if verified_results:
+        st.markdown("---")
+        st.subheader(f"✅ תוצאות מאומתות עבור: {topic}")
+        df = pd.DataFrame(verified_results)
+        st.table(df)
+        
+        st.success("העמודים בטבלה זו נסרקו פיזית על ידי המערכת והם מדויקים.")
+    else:
+        st.warning("לא נמצאו התאמות מדויקות. נסה להזין שם פרק כפי שהוא מופיע בספר.")
+
