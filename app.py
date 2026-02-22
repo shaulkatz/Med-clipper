@@ -1,3 +1,3 @@
 import streamlit as st
-st.write("Hello World")
-st.write("If you see this, we are back in business!")
+st.title("מבחן החייאה סופי")
+st.write("אם אתה רואה את זה, האייפד ואתה ניצחתם את המערכת!")
