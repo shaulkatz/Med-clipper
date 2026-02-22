@@ -1,39 +1,52 @@
 import streamlit as st
 import json, urllib.request
+from pypdf import PdfReader
 
-st.set_page_config(page_title="Nelson AI Chat", page_icon="🤖")
-st.title("🤖 Nelson AI: שלב השאלות והתשובות")
-st.markdown("שלב זה נועד לוודא שהאפליקציה מקבלת ממך קלט ומחזירה תשובה כהלכה.")
+st.set_page_config(page_title="Nelson File Analyzer", page_icon="📄")
+st.title("📄 Nelson AI: ניתוח קובץ PDF")
 
 # וידוא מפתח API
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("❌ חסר מפתח API ב-Secrets!")
     st.stop()
 
-# תיבת קלט מהמשתמש
-user_query = st.text_area("כתוב כאן שאלה לגמיני:", placeholder="למשל: What are the primary symptoms of Kawasaki disease?")
+# רכיב העלאת קובץ
+uploaded_file = st.file_uploader("העלה קובץ PDF לניתוח", type="pdf")
 
-if st.button("שלח שאלה"):
-    if not user_query:
-        st.warning("אנא הזן שאלה לפני הלחיצה.")
-    else:
-        api_key = st.secrets["GOOGLE_API_KEY"].strip()
-        # הכתובת המדויקת שעבדה בבדיקה הקודמת
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
-        
-        payload = {"contents": [{"parts": [{"text": user_query}]}]}
-        data = json.dumps(payload).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-        
-        with st.spinner("גמיני מנתח ועונה..."):
+if uploaded_file is not None:
+    st.success("הקובץ הועלה בהצלחה!")
+    
+    if st.button("נתח את נושא הקובץ"):
+        with st.spinner("קורא את הקובץ ושולח לגמיני..."):
             try:
-                with urllib.request.urlopen(req) as res:
-                    result = json.loads(res.read().decode('utf-8'))
-                    # שליפת התשובה מהמבנה של גוגל
-                    answer = result['candidates'][0]['content']['parts'][0]['text']
+                # 1. קריאת הטקסט מתוך ה-PDF (דוגמים את העמודים הראשונים כדי להבין נושא)
+                reader = PdfReader(uploaded_file)
+                text_sample = ""
+                # לוקחים עד 3 עמודים ראשונים לקבלת הקשר
+                for i in range(min(3, len(reader.pages))):
+                    text_sample += reader.pages[i].extract_text()
+                
+                if not text_sample.strip():
+                    st.error("לא הצלחתי לחלץ טקסט מהקובץ. וודא שזהו PDF עם טקסט ולא סריקה (תמונה).")
+                else:
+                    # 2. הכנת הפרומפט לגמיני
+                    prompt = f"Please read the following text from a medical textbook and tell me: What is the general topic of this file?\n\nText:\n{text_sample[:5000]}"
                     
-                    st.markdown("---")
-                    st.subheader("💡 התשובה של גמיני:")
-                    st.write(answer)
+                    # 3. שליחה לגמיני
+                    api_key = st.secrets["GOOGLE_API_KEY"].strip()
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+                    
+                    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                    data = json.dumps(payload).encode('utf-8')
+                    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+                    
+                    with urllib.request.urlopen(req) as res:
+                        result = json.loads(res.read().decode('utf-8'))
+                        answer = result['candidates'][0]['content']['parts'][0]['text']
+                        
+                        st.markdown("---")
+                        st.subheader("📝 ניתוח הנושא:")
+                        st.write(answer)
+                        
             except Exception as e:
-                st.error(f"תקלה בתקשורת: {str(e)}")
+                st.error(f"תקלה בתהליך: {str(e)}")
